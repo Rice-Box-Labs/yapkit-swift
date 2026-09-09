@@ -19,7 +19,7 @@ Add the package in Xcode with the repository URL, or add it to
 ```swift
 dependencies: [
     .package(
-        url: "https://github.com/nickswoke/yapkit-swift.git",
+        url: "https://github.com/Rice-Box-Labs/yapkit-swift.git",
         from: "0.1.0"
     )
 ]
