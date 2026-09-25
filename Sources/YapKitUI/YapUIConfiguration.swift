@@ -3,6 +3,7 @@ import YapKit
 
 public struct YapMessageRendererContext {
     public let message: YapMessage
+    public let user: YapUser?
     public let previousMessage: YapMessage?
     public let nextMessage: YapMessage?
     public let isCurrentUser: Bool
@@ -13,6 +14,34 @@ public struct YapMessageRendererContext {
     public let edit: () -> Void
     public let delete: () -> Void
     public let retry: () -> Void
+
+    public init(
+        message: YapMessage,
+        user: YapUser? = nil,
+        previousMessage: YapMessage? = nil,
+        nextMessage: YapMessage? = nil,
+        isCurrentUser: Bool,
+        currentUserID: String,
+        theme: YapTheme,
+        reply: @escaping () -> Void,
+        react: @escaping (String) -> Void,
+        edit: @escaping () -> Void,
+        delete: @escaping () -> Void,
+        retry: @escaping () -> Void
+    ) {
+        self.message = message
+        self.user = user
+        self.previousMessage = previousMessage
+        self.nextMessage = nextMessage
+        self.isCurrentUser = isCurrentUser
+        self.currentUserID = currentUserID
+        self.theme = theme
+        self.reply = reply
+        self.react = react
+        self.edit = edit
+        self.delete = delete
+        self.retry = retry
+    }
 }
 
 @MainActor public protocol YapMessageRenderer {
@@ -135,7 +164,21 @@ public struct YapInboxStateRendererContext {
 
 public struct YapTypingIndicatorRendererContext {
     public let userIDs: Set<String>
+    public let typingUsers: [YapUser]
+    public let channelKind: YapChannelKind
     public let theme: YapTheme
+
+    public init(
+        userIDs: Set<String>,
+        typingUsers: [YapUser] = [],
+        channelKind: YapChannelKind = .direct,
+        theme: YapTheme
+    ) {
+        self.userIDs = userIDs
+        self.typingUsers = typingUsers
+        self.channelKind = channelKind
+        self.theme = theme
+    }
 }
 
 @MainActor public protocol YapTypingIndicatorRenderer {

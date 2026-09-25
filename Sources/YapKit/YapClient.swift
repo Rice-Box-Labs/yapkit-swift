@@ -74,15 +74,27 @@ public final class YapClient: YapChatService, Sendable {
 public final class YapChannelSocket: @unchecked Sendable {
     private let task: URLSessionWebSocketTask
     private let decoder: JSONDecoder
+    public private(set) var hasMore = false
     init(task: URLSessionWebSocketTask) { self.task = task; decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970; task.resume() }
     public func cancel() { task.cancel(with: .goingAway, reason: nil) }
+    public func sendTyping(isTyping: Bool) async throws {
+        let payload = try JSONSerialization.data(
+            withJSONObject: [
+                "type": isTyping ? "typing.start" : "typing.stop"
+            ]
+        )
+        guard let message = String(data: payload, encoding: .utf8) else {
+            throw YapError.transport("could not encode typing signal")
+        }
+        try await task.send(.string(message))
+    }
     public func receive() async throws -> YapSocketEvent {
         let payload = try await task.receive()
         let data: Data
         switch payload { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: throw YapError.transport("unsupported websocket payload") }
         let event = try decoder.decode(WireEvent.self, from: data)
         switch event.type {
-        case "connection.ready": return .ready(nextSequence: event.nextSequence ?? 0)
+        case "connection.ready": hasMore = event.hasMore ?? false; return .ready(nextSequence: event.nextSequence ?? 0)
         case "message.created": return .messageCreated(try event.message())
         case "message.ack": return .acknowledgement(try event.message())
         case "message.updated", "message.deleted": return .messageUpdated(try event.message())
@@ -124,8 +136,8 @@ public final class YapInboxSocket: @unchecked Sendable {
 }
 
 private struct WireEvent: Decodable {
-    let type: String; let id: String?; let userId: String?; let text: String?; let sequence: Int?; let createdAt: Date?; let clientID: String?; let editedAt: Date?; let deleted: Int?; let nextSequence: Int?; let code: String?; let isTyping: Bool?
-    enum CodingKeys: String, CodingKey { case type, id, userId = "user_id", text, sequence, createdAt = "created_at", clientID = "client_id", editedAt = "edited_at", deleted, nextSequence, code, isTyping = "is_typing" }
+    let type: String; let id: String?; let userId: String?; let text: String?; let sequence: Int?; let createdAt: Date?; let clientID: String?; let editedAt: Date?; let deleted: Int?; let nextSequence: Int?; let hasMore: Bool?; let code: String?; let isTyping: Bool?
+    enum CodingKeys: String, CodingKey { case type, id, userId = "user_id", text, sequence, createdAt = "created_at", clientID = "client_id", editedAt = "edited_at", deleted, nextSequence, hasMore, code, isTyping = "is_typing" }
     func message() throws -> YapMessage { guard let id, let userId, let text, let sequence, let createdAt else { throw YapError.transport("invalid message event") }; return YapMessage(id: id, userId: userId, text: text, sequence: sequence, createdAt: createdAt, clientID: clientID, editedAt: editedAt, isDeleted: deleted == 1) }
 }
 

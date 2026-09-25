@@ -8,9 +8,15 @@ let package = Package(
         .library(name: "YapKit", targets: ["YapKit"]),
         .library(name: "YapKitUI", targets: ["YapKitUI"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/iconoir-icons/iconoir-swift.git", from: "7.0.0")
+    ],
     targets: [
         .target(name: "YapKit"),
-        .target(name: "YapKitUI", dependencies: ["YapKit"]),
+        .target(name: "YapKitUI", dependencies: [
+            "YapKit",
+            .product(name: "Iconoir", package: "iconoir-swift")
+        ]),
         .testTarget(name: "YapKitTests", dependencies: ["YapKit"]),
         .testTarget(name: "YapKitUITests", dependencies: ["YapKit", "YapKitUI"])
     ]

@@ -87,6 +87,15 @@ private enum YapPreviewFixtures {
     YapPreviewComposer()
 }
 
+#Preview("YapKit Typing Indicator") {
+    YapPreviewTypingIndicator()
+}
+
+#Preview("YapKit Typing Indicator · Dark") {
+    YapPreviewTypingIndicator()
+        .preferredColorScheme(.dark)
+}
+
 @MainActor
 private struct YapPreviewComposer: View {
     @State private var draft = "Write a thoughtful update…"
@@ -106,6 +115,84 @@ private struct YapPreviewComposer: View {
             )
         )
         .background(YapTheme().colors.canvas)
+    }
+}
+
+@MainActor
+private struct YapPreviewTypingIndicator: View {
+    @State private var activeUserCount = 5
+
+    private let users = [
+        YapUser(
+            id: "maya",
+            displayName: "Maya",
+            avatarURL: URL(string: "https://i.pravatar.cc/96?img=47")
+        ),
+        YapUser(
+            id: "jonah",
+            displayName: "Jonah",
+            avatarURL: URL(string: "https://i.pravatar.cc/96?img=12")
+        ),
+        YapUser(
+            id: "ria",
+            displayName: "Ria",
+            avatarURL: URL(string: "https://i.pravatar.cc/96?img=32")
+        ),
+        YapUser(
+            id: "theo",
+            displayName: "Theo",
+            avatarURL: URL(string: "https://i.pravatar.cc/96?img=11")
+        ),
+        YapUser(
+            id: "imani",
+            displayName: "Imani",
+            avatarURL: URL(string: "https://i.pravatar.cc/96?img=45")
+        ),
+        YapUser(id: "noah", displayName: "Noah")
+    ]
+
+    private var activeUsers: [YapUser] {
+        Array(users.prefix(activeUserCount))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Group {
+                if !activeUsers.isEmpty {
+                    typingIndicator(for: activeUsers)
+                        .transition(
+                            .opacity.combined(
+                                with: .scale(scale: 0.92, anchor: .leading)
+                            )
+                        )
+                }
+            }
+            .animation(
+                .spring(response: 0.42, dampingFraction: 0.82),
+                value: activeUserCount
+            )
+
+            Stepper(
+                "People typing: \(activeUserCount)",
+                value: $activeUserCount,
+                in: 0...users.count
+            )
+            .padding(.horizontal)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 24)
+        .background(YapTheme().colors.canvas)
+    }
+
+    private func typingIndicator(for users: [YapUser]) -> some View {
+        YapDefaultTypingIndicatorRenderer().makeBody(
+            context: .init(
+                userIDs: Set(users.map(\.id)),
+                typingUsers: users,
+                channelKind: .group,
+                theme: .init()
+            )
+        )
     }
 }
 
