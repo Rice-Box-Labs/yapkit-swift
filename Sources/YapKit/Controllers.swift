@@ -3,10 +3,17 @@ import Observation
 
 @MainActor @Observable public final class YapChannelListController {
     public private(set) var channels: [YapChannel] = []; public private(set) var isLoading = false; public private(set) var error: YapError?; public private(set) var connectionState: YapConnectionState = .disconnected
-    private let client: any YapChatService; private let tenantId: String
+    private let client: any YapChatService; private var tenantId: String
     @ObservationIgnored private var socket: YapInboxSocket?
     @ObservationIgnored private var receiveTask: Task<Void, Never>?
     public init(client: any YapChatService, tenantId: String) { self.client = client; self.tenantId = tenantId }
+    public func updateTenantId(_ tenantId: String) {
+        guard self.tenantId != tenantId else { return }
+        disconnect()
+        self.tenantId = tenantId
+        channels = []
+        error = nil
+    }
     public func start() async { await load(); guard error == nil else { connectionState = .failed("inbox_load_failed"); return }; connect() }
     public func retry() async { await start() }
     public func load() async {
@@ -78,13 +85,36 @@ import Observation
 @MainActor @Observable public final class YapChannelController {
     public private(set) var messages: [YapMessage] = []; public private(set) var isLoading = false; public private(set) var error: YapError?; public private(set) var connectionState: YapConnectionState = .disconnected; public private(set) var typingUserIDs: Set<String> = []; public private(set) var searchResults: [YapSearchResult] = []
     private let client: any YapChatService; public let channel: YapChannel; public let currentUserID: String; private var lastSequence = 0
+    private var localIsTyping = false
     @ObservationIgnored private var socket: YapChannelSocket?
     @ObservationIgnored private var receiveTask: Task<Void, Never>?
+    @ObservationIgnored private var typingStopTask: Task<Void, Never>?
+    @ObservationIgnored private var typingSendTask: Task<Void, Never>?
     public init(client: any YapChatService, channel: YapChannel, currentUserID: String = "self") { self.client = client; self.channel = channel; self.currentUserID = currentUserID }
     public func load() async { isLoading = true; error = nil; do { merge(try await client.messages(channelId: channel.id, after: lastSequence)); await markReadIfNeeded() } catch let e as YapError { self.error = e; connectionState = .failed(String(describing: e)) } catch let underlying { self.error = .transport(underlying.localizedDescription); connectionState = .failed(underlying.localizedDescription) }; isLoading = false }
     public func retry() async { await load() }
     public func connect() { receiveTask?.cancel(); socket?.cancel(); receiveTask = Task { [weak self] in await self?.runRealtimeLoop() } }
-    public func disconnect() { receiveTask?.cancel(); receiveTask = nil; socket?.cancel(); socket = nil; connectionState = .disconnected }
+    public func disconnect() { typingStopTask?.cancel(); typingStopTask = nil; localIsTyping = false; receiveTask?.cancel(); receiveTask = nil; socket?.cancel(); socket = nil; typingSendTask?.cancel(); typingSendTask = nil; connectionState = .disconnected }
+    /// Publishes the local draft's typing state. A stop is sent automatically
+    /// after a short idle period so hosts do not need their own debounce.
+    public func updateTyping(isTyping: Bool) {
+        typingStopTask?.cancel()
+        typingStopTask = nil
+        if isTyping {
+            if !localIsTyping {
+                localIsTyping = true
+                queueTypingSignal(true)
+            }
+            typingStopTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.updateTyping(isTyping: false)
+            }
+        } else if localIsTyping {
+            localIsTyping = false
+            queueTypingSignal(false)
+        }
+    }
     public func send(text: String, replyTo: String? = nil, attachments: [String] = []) async {
         let clientID = UUID().uuidString
         let localID = "local:\(clientID)"
@@ -121,6 +151,7 @@ import Observation
                 try await catchUp()
                 let connectedSocket = try await client.openChannelSocket(channelId: channel.id, after: lastSequence)
                 socket = connectedSocket; connectionState = .connected; backoff = 1_000_000_000
+                if localIsTyping { queueTypingSignal(true) }
                 while !Task.isCancelled {
                     let event = try await connectedSocket.receive()
                     if case .failure(let code) = event {
@@ -141,8 +172,28 @@ import Observation
             }
         }
     }
-    private func catchUp() async throws { merge(try await client.messages(channelId: channel.id, after: lastSequence)); await markReadIfNeeded() }
-    private func receive(_ event: YapSocketEvent) async { switch event { case .ready(let sequence): lastSequence = max(lastSequence, sequence); case .messageCreated(let message), .acknowledgement(let message): merge([message]); await markReadIfNeeded(); case .messageUpdated(let message), .reactionUpdated(let message): replace(message); case .read(_, _): break; case .typing(let userID, let isTyping): if isTyping { typingUserIDs.insert(userID) } else { typingUserIDs.remove(userID) }; case .failure(let code): error = .server(code: code) } }
+    private func catchUp() async throws {
+        // The API caps each page so reconnects cannot materialize an entire
+        // channel history. Drain a bounded number of pages before realtime
+        // resumes; a ready event with hasMore continues the next batch.
+        for _ in 0..<10 {
+            let incoming = try await client.messages(channelId: channel.id, after: lastSequence)
+            merge(incoming)
+            if incoming.count < 100 { break }
+        }
+        await markReadIfNeeded()
+    }
+    private func queueTypingSignal(_ isTyping: Bool) {
+        let connectedSocket = socket
+        let previousTask = typingSendTask
+        typingSendTask = Task { [weak self] in
+            await previousTask?.value
+            guard !Task.isCancelled, let connectedSocket else { return }
+            try? await connectedSocket.sendTyping(isTyping: isTyping)
+            self?.typingSendTask = nil
+        }
+    }
+    private func receive(_ event: YapSocketEvent, hasMore: Bool = false) async { switch event { case .ready(let sequence): lastSequence = max(lastSequence, sequence); if hasMore { try? await catchUp() }; case .messageCreated(let message), .acknowledgement(let message): merge([message]); await markReadIfNeeded(); case .messageUpdated(let message), .reactionUpdated(let message): replace(message); case .read(_, _): break; case .typing(let userID, let isTyping): if isTyping { typingUserIDs.insert(userID) } else { typingUserIDs.remove(userID) }; case .failure(let code): error = .server(code: code) } }
     private func markReadIfNeeded() async { guard lastSequence > 0 else { return }; try? await client.markChannelRead(channelId: channel.id, through: lastSequence) }
     private func resolvePending(localID: String, with message: YapMessage) {
         messages.removeAll { $0.id == localID }
