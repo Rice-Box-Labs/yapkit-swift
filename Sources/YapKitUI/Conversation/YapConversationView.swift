@@ -125,7 +125,6 @@ public struct YapConversationView<HeaderAccessory: View>: View {
             )
         }
         .background(theme.canvas)
-        .animatedTabBarHidden()
         .toolbar {
             ToolbarItem(placement: .principal) {
                 configuration.headerRenderer.makeBody(
